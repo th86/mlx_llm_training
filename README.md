@@ -4,6 +4,7 @@ Working mlx llm training script for finetuning. Idea from [Joana Levtcheva's pos
 
 Fixed the non-working part (custom_load_hf_dataset) using OpenCode and replaced `Mistral-7B-Instruct-v0.3-4bit` with `SmolLM-135M-4bit`. 
 
-#TODO 
+# TODO 
 
 - SFT, DPO, GRPO, TTS, STT using [mlx-tune](https://github.com/ARahim3/mlx-tune)
+- [GRPO](https://github.com/searlion/mlx-finetuning/blob/main/MLX%20LM%20GRPO.ipynb)
