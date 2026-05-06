@@ -42,9 +42,10 @@ training_args = TrainingArgs(
     iters=200,
     steps_per_eval=50,
 )
+#loss = cross entropy, when using Low-Rank Adaptation (LoRA) for Supervised Fine-Tuning (SFT), a reward function is typically not required.
 
 model.freeze()
-linear_to_lora_layers(model, lora_config["num_layers"], lora_config["lora_parameters"])
+linear_to_lora_layers(model, lora_config["num_layers"], lora_config["lora_parameters"]) 
 num_train_params = sum(v.size for _, v in tree_flatten(model.trainable_parameters()))
 print(f"Number of trainable parameters: {num_train_params}")
 
@@ -86,15 +87,23 @@ def custom_load_hf_dataset(
 def format_dataset_for_training(dataset, tokenizer, training_args):
     """Format dataset into MLX-LM training format."""
     formatted_data = []
+
+    # Check the actual format of the first example to understand the structure
+    if len(dataset) > 0:
+        first_example = dataset[0]
+        print(f"\nDataset example keys: {first_example.keys()}")
+        print(f"First example: {first_example}\n")
+
     for example in dataset:
-        # Format QA pair as chat
-        messages = [
-            {"role": "user", "content": example.get("question", "")},
-            {"role": "assistant", "content": example.get("answer", "")}
-        ]
-        text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=False
-        )
+        # The dataset appears to use 'text' field with Gemma format
+        if 'text' in example:
+            text = example['text']
+        elif 'question' in example and 'answer' in example:
+            # Fallback to QA format if that's the case
+            text = f"<start_of_turn>user\n{example['question']}<end_of_turn>\n<start_of_turn>model\n{example['answer']}<end_of_turn>"
+        else:
+            continue
+
         formatted_data.append({"text": text})
 
     # Use mask_prompt=False to treat it as standard text completion
@@ -126,6 +135,21 @@ train_set = format_dataset_for_training(raw_train, tokenizer, training_args) if 
 val_set = format_dataset_for_training(raw_val, tokenizer, training_args) if raw_val else None
 test_set = format_dataset_for_training(raw_test, tokenizer, training_args) if raw_test else None
 
+# Print first 5 parsed instances of the training dataset
+if train_set:
+    print("\n" + "="*80)
+    print("First 5 parsed instances of the training dataset:")
+    print("="*80)
+    for i in range(min(5, len(train_set))):
+        tokens, offset = train_set[i]
+        decoded_text = tokenizer.decode(tokens)
+        print(f"\nInstance {i+1}:")
+        print(f"  Tokens length: {len(tokens)}")
+        print(f"  Offset: {offset}")
+        print(f"  Decoded text (first 200 chars): {decoded_text[:200]}...")
+        print(f"  Full tokens: {tokens[:20]}..." if len(tokens) > 20 else f"  Full tokens: {tokens}")
+    print("="*80 + "\n")
+
 train(
     model=model,
     #tokenizer=tokenizer,
@@ -149,7 +173,7 @@ plt.show()
 ############
 
 
-model_lora, _ = load(model_path, adapter_path=adapter_path)
-response = generate(model_lora, tokenizer, prompt=prompt, verbose=True)
+#model_lora, _ = load(model_path, adapter_path=adapter_path)
+#response = generate(model_lora, tokenizer, prompt=prompt, verbose=True)
 
 #try https://github.com/ARahim3/mlx-tune
