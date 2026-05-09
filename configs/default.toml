@@ -1,0 +1,37 @@
+# Default GRPO config - balanced settings for Qwen2.5-1.5B on Apple Silicon
+# For quick testing, see smoke_test.toml or ultra_light.toml
+
+model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+output_dir = "outputs/Qwen-1.5B-MLX-GRPO"
+run_name   = "Qwen-1.5B-MLX-GRPO-gsm8k"
+
+# training
+learning_rate = 1e-6
+num_epochs = 1
+batch_size = 1
+gradient_accumulation_steps = 4
+max_train_samples = 0             # 0 = use all
+warmup_ratio = 0.1
+max_grad_norm = 0.1
+logging_steps = 1
+save_steps = 100
+
+# sampling / rollout (keep modest for memory)
+num_generations = 4               # 64 in paper; reduce for M2 Pro (was 8, now 4 to save memory)
+max_new_tokens = 256
+temperature = 0.7
+clip_eps = 0.2
+kl_coeff = 0.0
+
+# eval & logging
+eval_steps = 50
+eval_samples = 200
+eval_every_updates = 25
+eval_subset_size = 200
+eval_max_new_tokens = 128
+log_jsonl = true
+
+# system
+seed = 42
+use_compile = true
+quantize_for_rollouts = true      # 4-bit quant for rollout policies
