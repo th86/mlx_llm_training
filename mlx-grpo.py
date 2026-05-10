@@ -1069,23 +1069,9 @@ class MLXGRPOTrainer:
             full_seq = prompt_tokens + resp_tokens
             input_array = mx.array([full_seq])  # shape: [1, seq_len]
 
-            # Get current params
-            params = dict(self.model.trainable_parameters())
-
-            # Define loss function that captures graph locally
-            def compute_loss_for_grad(params, input_arr, prompt_len, resp_tokens, resp_old_log_prob, resp_adv, resp_ref_log_prob, full_seq):
-                """Compute loss - graph is local to this function call."""
-                self.model.update(params)
-
-                # Forward pass
-                if isinstance(self.model, nn.Module):
-                    logits = self.model(input_arr)
-                elif isinstance(self.model, dict) and 'model' in self.model:
-                    logits = self.model['model'](input_arr)
-                else:
-                    raise ValueError(f"Unexpected model type: {type(self.model)}")
-
-                # Compute log prob for response tokens
+            # Use nn.value_and_grad for proper graph management
+            def loss_fn(model, input_arr, prompt_len, resp_tokens, resp_old_log_prob, resp_adv, resp_ref_log_prob, full_seq):
+                logits = model(input_arr)
                 resp_lps = []
                 for j in range(len(resp_tokens)):
                     pos = prompt_len - 1 + j
@@ -1097,49 +1083,37 @@ class MLXGRPOTrainer:
                     target_id = full_seq[target_pos]
                     log_prob = nn.log_softmax(logits[0, pos, :])[target_id]
                     resp_lps.append(log_prob)
-
                 if resp_lps:
                     current_log_prob = mx.sum(mx.stack(resp_lps))
                 else:
                     current_log_prob = mx.array(0.0)
-
-                # GRPO loss
                 ratio = mx.exp(current_log_prob - resp_old_log_prob)
                 clipped_ratio = mx.clip(ratio, 1.0 - self.args.clip_eps, 1.0 + self.args.clip_eps)
                 policy_reward = mx.minimum(ratio * resp_adv, clipped_ratio * resp_adv)
-
                 if self.ref_model is not None:
                     log_ratio_for_kl = resp_ref_log_prob - current_log_prob
                     ratio_for_kl = mx.exp(log_ratio_for_kl)
                     kl_div = ratio_for_kl - log_ratio_for_kl - 1
                 else:
                     kl_div = mx.array(0.0)
-
                 objective = policy_reward - self.args.kl_coeff * kl_div
                 loss = -objective
-                return loss, policy_reward, kl_div
+                loss_fn.pol_rew = float(policy_reward)
+                loss_fn.kl = float(kl_div)
+                return loss
 
-            # Compute value and grad - graph is created and destroyed within this call
-            # Force stop_gradient on model outputs to prevent graph accumulation
-            def compute_loss_and_grads(params):
-                loss, pol_rew, kl = compute_loss_for_grad(
-                    params, input_array, prompt_len, resp_tokens,
-                    resp_old_log_probs, resp_advantage, resp_ref_log_probs,
-                    full_seq
-                )
-                # Attach auxiliary values as attributes
-                compute_loss_and_grads.pol_rew = pol_rew
-                compute_loss_and_grads.kl = kl
-                # Stop gradient to prevent graph from being retained
-                return mx.stop_gradient(loss)
+            # Compute loss and grads using nn.value_and_grad (MLX standard pattern)
+            vg_fn = nn.value_and_grad(self.model, loss_fn)
+            loss_val, single_grads = vg_fn(
+                self.model, input_array, prompt_len, resp_tokens,
+                resp_old_log_probs, resp_advantage, resp_ref_log_probs,
+                full_seq
+            )
 
-            # Get loss value first, then compute grads separately
-            loss_val = compute_loss_and_grads(params)
-            policy_reward_val = compute_loss_and_grads.pol_rew
-            kl_div_val = compute_loss_and_grads.kl
-
-            # Now compute grads with a fresh forward pass that has no retained graph
-            single_grads = mx.grad(lambda p: compute_loss_and_grads(p))(params)
+            # Convert to Python floats immediately to break graph connections
+            loss_val = float(loss_val)
+            policy_reward_val = loss_fn.pol_rew
+            kl_div_val = loss_fn.kl
 
             # Convert to Python floats immediately to break any graph connections
             total_loss += float(loss_val)
